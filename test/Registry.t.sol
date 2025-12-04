@@ -74,6 +74,7 @@ contract MockERC20 is IERC20 {
 
         function transfer(address to, uint256 amt) public override returns (bool) {
             if (armedRemove) {
+                // assumes node 0 exists
                 registry.removeNode(0);
             }
             return super.transfer(to, amt);
@@ -126,10 +127,14 @@ contract MockERC20 is IERC20 {
 
         // -------- constructor --------
 
-        function test_constructor_sets_state_and_admin_role() public view {
+        function test_constructor_sets_state_and_roles() public view {
             assertEq(reg.minStake(), minStake);
             assertEq(reg.stakeToken(), address(stake));
+
             assertTrue(reg.hasRole(reg.ADMIN_ROLE(), admin));
+            assertTrue(reg.hasRole(reg.ALLOWLIST_ROLE(), admin));
+            assertTrue(reg.hasRole(reg.CONFIG_ROLE(), admin));
+            assertTrue(reg.hasRole(reg.PAUSER_ROLE(), admin));
         }
 
         function test_constructor_revert_minStake_zero() public {
@@ -150,9 +155,36 @@ contract MockERC20 is IERC20 {
             new GlassNodeRegistry(address(0), address(stake), minStake);
         }
 
+        // -------- pause/unpause --------
+
+        function test_pause_only_pauser_and_blocks_registration_and_removal() public {
+            uint256 id = _makeNode(op1, address(vault1));
+
+            vm.prank(rand);
+            vm.expectRevert();
+            reg.pause();
+
+            vm.prank(admin);
+            reg.pause();
+
+            vm.prank(op2);
+            vm.expectRevert(); // Pausable: paused
+            reg.registerNode("x", address(vault1));
+
+            vm.prank(op1);
+            vm.expectRevert(); // Pausable: paused
+            reg.removeNode(id);
+
+            vm.prank(admin);
+            reg.unpause();
+
+            vm.prank(op2);
+            reg.registerNode("ok", address(vault1));
+        }
+
         // -------- allowlist --------
 
-        function test_allowlist_only_admin_and_effective() public {
+        function test_allowlist_only_allowlist_role_and_effective() public {
             vm.prank(rand);
             vm.expectRevert();
             reg.setAllowlistEnabled(true);
@@ -170,6 +202,19 @@ contract MockERC20 is IERC20 {
 
             vm.prank(op1);
             reg.registerNode("x", address(vault1));
+
+            vm.prank(admin);
+            reg.setAllowedRegistrant(op1, false);
+
+            vm.prank(op1);
+            vm.expectRevert(GlassNodeRegistry.NotAllowedRegistrant.selector);
+            reg.registerNode("y", address(vault1));
+        }
+
+        function test_allowlist_setAllowedRegistrant_revert_zero_address() public {
+            vm.prank(admin);
+            vm.expectRevert(GlassNodeRegistry.InvalidAddress.selector);
+            reg.setAllowedRegistrant(address(0), true);
         }
 
         // -------- registerNode --------
@@ -506,9 +551,9 @@ contract MockERC20 is IERC20 {
             assertEq(models[1], mB);
         }
 
-        // -------- admin / minStake --------
+        // -------- admin / roles / minStake --------
 
-        function test_setAdmin_only_admin_and_transfers_role() public {
+        function test_setAdmin_only_admin_and_transfers_all_roles() public {
             vm.prank(rand);
             vm.expectRevert();
             reg.setAdmin(op1);
@@ -519,7 +564,14 @@ contract MockERC20 is IERC20 {
             reg.setAdmin(op1);
 
             assertTrue(reg.hasRole(reg.ADMIN_ROLE(), op1));
+            assertTrue(reg.hasRole(reg.ALLOWLIST_ROLE(), op1));
+            assertTrue(reg.hasRole(reg.CONFIG_ROLE(), op1));
+            assertTrue(reg.hasRole(reg.PAUSER_ROLE(), op1));
+
             assertFalse(reg.hasRole(reg.ADMIN_ROLE(), admin));
+            assertFalse(reg.hasRole(reg.ALLOWLIST_ROLE(), admin));
+            assertFalse(reg.hasRole(reg.CONFIG_ROLE(), admin));
+            assertFalse(reg.hasRole(reg.PAUSER_ROLE(), admin));
         }
 
         function test_setAdmin_revert_zero() public {
@@ -528,7 +580,7 @@ contract MockERC20 is IERC20 {
             reg.setAdmin(address(0));
         }
 
-        function test_setMinStake_only_admin_and_nonzero() public {
+        function test_setMinStake_only_config_role_and_nonzero() public {
             vm.prank(rand);
             vm.expectRevert();
             reg.setMinStake(1);
@@ -540,6 +592,153 @@ contract MockERC20 is IERC20 {
             vm.prank(admin);
             reg.setMinStake(55);
             assertEq(reg.minStake(), 55);
+
+            // after admin transfer, old admin should no longer be able to set stake
+            vm.prank(admin);
+            reg.setAdmin(op1);
+
+            vm.prank(admin);
+            vm.expectRevert();
+            reg.setMinStake(66);
+
+            vm.prank(op1);
+            reg.setMinStake(66);
+            assertEq(reg.minStake(), 66);
+        }
+
+        function test_allowlist_role_persists_after_admin_transfer() public {
+            vm.prank(admin);
+            reg.setAdmin(op1);
+
+            vm.prank(admin);
+            vm.expectRevert();
+            reg.setAllowlistEnabled(true);
+
+            vm.prank(op1);
+            reg.setAllowlistEnabled(true);
+            assertTrue(reg.allowlistEnabled());
+        }
+
+        function test_role_grants_limit_powers_as_expected() public {
+            // Setup a node so we have something to act on
+            uint256 id = _makeNode(op1, address(vault1));
+
+            // Addresses to receive scoped roles
+            address allowlister = address(0x1111);
+            address configurer = address(0x2222);
+            address pauser = address(0x3333);
+
+            // ---- Admin grants specific roles to specific addresses ----
+            vm.startPrank(admin);
+            reg.grantRole(reg.ALLOWLIST_ROLE(), allowlister);
+            reg.grantRole(reg.CONFIG_ROLE(), configurer);
+            reg.grantRole(reg.PAUSER_ROLE(), pauser);
+            vm.stopPrank();
+
+            // ---- Allowlister: can manage allowlist, cannot do config or pausing ----
+
+            // can enable allowlist
+            vm.prank(allowlister);
+            reg.setAllowlistEnabled(true);
+            assertTrue(reg.allowlistEnabled());
+
+            // can add an allowed registrant
+            vm.prank(allowlister);
+            reg.setAllowedRegistrant(op2, true);
+            assertTrue(reg.isAllowedRegistrant(op2));
+
+            // cannot change minStake (no CONFIG_ROLE)
+            vm.prank(allowlister);
+            vm.expectRevert();
+            reg.setMinStake(123);
+
+            // cannot pause/unpause (no PAUSER_ROLE)
+            vm.prank(allowlister);
+            vm.expectRevert();
+            reg.pause();
+
+            // cannot rotate admin (no ADMIN_ROLE)
+            vm.prank(allowlister);
+            vm.expectRevert();
+            reg.setAdmin(allowlister);
+
+            // ---- Configurer: can change minStake, cannot allowlist or pausing ----
+
+            // can change minStake
+            vm.prank(configurer);
+            reg.setMinStake(200e18);
+            assertEq(reg.minStake(), 200e18);
+
+            // cannot enable allowlist (no ALLOWLIST_ROLE)
+            vm.prank(configurer);
+            vm.expectRevert();
+            reg.setAllowlistEnabled(false);
+
+            // cannot set allowed registrants
+            vm.prank(configurer);
+            vm.expectRevert();
+            reg.setAllowedRegistrant(op2, false);
+
+            // cannot pause/unpause
+            vm.prank(configurer);
+            vm.expectRevert();
+            reg.pause();
+
+            // cannot rotate admin
+            vm.prank(configurer);
+            vm.expectRevert();
+            reg.setAdmin(configurer);
+
+            // ---- Pauser: can pause/unpause, cannot allowlist or config ----
+
+            // can pause
+            vm.prank(pauser);
+            reg.pause();
+
+            // while paused, register/remove should revert (shows pauser power is real)
+            vm.prank(op2);
+            vm.expectRevert();
+            reg.registerNode("x", address(vault1));
+
+            vm.prank(op1);
+            vm.expectRevert();
+            reg.removeNode(id);
+
+            // can unpause
+            vm.prank(pauser);
+            reg.unpause();
+
+            // cannot change minStake
+            vm.prank(pauser);
+            vm.expectRevert();
+            reg.setMinStake(1);
+
+            // cannot manage allowlist
+            vm.prank(pauser);
+            vm.expectRevert();
+            reg.setAllowlistEnabled(true);
+
+            vm.prank(pauser);
+            vm.expectRevert();
+            reg.setAllowedRegistrant(op2, true);
+
+            // cannot rotate admin
+            vm.prank(pauser);
+            vm.expectRevert();
+            reg.setAdmin(pauser);
+
+            // ---- Sanity: admin still can do everything ----
+            vm.prank(admin);
+            reg.setAllowlistEnabled(false);
+
+            vm.prank(admin);
+            reg.setMinStake(150e18);
+
+            vm.prank(admin);
+            reg.pause();
+
+            vm.prank(admin);
+            reg.unpause();
         }
 
         // -------- view reverts --------

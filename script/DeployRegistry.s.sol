@@ -14,8 +14,8 @@ import {GlassNodeRegistry} from "../src/GlassNodeRegistry.sol";
 ///        Otherwise pass `--private-key` / `--mnemonic` to forge.
 ///      Example usage:
 ///        REG_ADMIN=0x... REG_STAKE_TOKEN=0x... REG_MIN_STAKE=100e18 \
-///        forge script script/DeployRegistry.s.sol:GlassNodeRegistryScript --broadcast
-contract GlassNodeRegistryScript is Script {
+///        forge script script/DeployRegistry.s.sol:GlassNodeRegistryDeployScript --broadcast
+contract GlassNodeRegistryDeployScript is Script {
     GlassNodeRegistry public reg;
 
     function run() public {

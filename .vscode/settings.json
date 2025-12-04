@@ -1,7 +1,10 @@
 {
     "cSpell.words": [
+        "allowlister",
+        "configurer",
         "IERC20",
-        "Reentrancy"
+        "Reentrancy",
+        "remappings"
     ],
     "editor.formatOnSave": true,
     "solidity.packageDefaultDependenciesDirectory": "lib",

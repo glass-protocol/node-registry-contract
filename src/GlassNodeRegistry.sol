@@ -4,15 +4,26 @@ pragma solidity 0.8.30;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
+contract GlassNodeRegistry is AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     // ============================================
     // ROLES
     // ============================================
+    /// @notice Super-admin role (inherits from DEFAULT_ADMIN_ROLE)
     bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
+
+    /// @notice Can enable/disable allowlist and manage registrants
+    bytes32 public constant ALLOWLIST_ROLE = keccak256("ALLOWLIST_ROLE");
+
+    /// @notice Can update staking configuration (minStake)
+    bytes32 public constant CONFIG_ROLE = keccak256("CONFIG_ROLE");
+
+    /// @notice Can pause/unpause the registry in emergencies
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // ============================================
     // TYPES
@@ -103,9 +114,15 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
         if (minStake_ == 0) revert MinStakeNotSet();
         if (stakeToken_ == address(0)) revert InvalidStakeToken();
         if (stakeToken_.code.length == 0) revert InvalidStakeToken();
-
         if (admin_ == address(0)) revert InvalidAddress();
+
+        // Super admin
         _grantRole(ADMIN_ROLE, admin_);
+
+        // Operational roles initially assigned to the same address
+        _grantRole(ALLOWLIST_ROLE, admin_);
+        _grantRole(CONFIG_ROLE, admin_);
+        _grantRole(PAUSER_ROLE, admin_);
 
         stakeToken = stakeToken_;
         minStake = minStake_;
@@ -130,10 +147,6 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     // NODE MANAGEMENT
     // ============================================
 
-    // ============================================
-    // NODE MANAGEMENT
-    // ============================================
-
     /// @notice Register a new node controlled by the caller.
     /// @dev Requires a `paymentVault` that is a contract, allowlist compliance if enabled,
     ///      and an ERC-20 stake transfer of exactly `minStake` `stakeToken` from caller to registry.
@@ -143,6 +156,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     function registerNode(string calldata metadataURI, address paymentVault)
         external
         nonReentrant
+        whenNotPaused
         returns (uint256 nodeId)
     {
         // Best effort to ensure the paymentVault is a smartContract, and hopefully implements IPaymentChannelVault
@@ -183,7 +197,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     ///      and transfers refund to the *current* operator.
     ///      Uses nonReentrant around the ERC-20 refund transfer.
     /// @param nodeId Id of the node to remove.
-    function removeNode(uint256 nodeId) external nonReentrant onlyOperatorOrAdmin(nodeId) {
+    function removeNode(uint256 nodeId) external nonReentrant whenNotPaused onlyOperatorOrAdmin(nodeId) {
         Node storage n = _nodes[nodeId];
         if (!n.active) revert AlreadyInactive();
 
@@ -291,7 +305,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @notice Get all models a node currently supports.
     /// @param nodeId Id of the node.
     /// @return models Array of model ids.
-    function getNodeModels(uint256 nodeId) external view returns (bytes32[] memory) {
+    function getNodeModels(uint256 nodeId) external view returns (bytes32[] memory models) {
         if (!_exists(nodeId)) revert InvalidNode();
         return _nodeModels[nodeId];
     }
@@ -301,7 +315,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @param modelId Model identifier.
     /// @param payToken Payment token address.
     /// @return price Stored per-token price (0 if unset).
-    function getModelPrice(uint256 nodeId, bytes32 modelId, address payToken) external view returns (uint256) {
+    function getModelPrice(uint256 nodeId, bytes32 modelId, address payToken) external view returns (uint256 price) {
         if (!_exists(nodeId)) revert InvalidNode();
         return modelPricePerToken[nodeId][modelId][payToken];
     }
@@ -310,60 +324,84 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @param nodeId Id of the node.
     /// @param modelId Model identifier.
     /// @return payTokens Array of ERC-20 token addresses accepted for the model.
-    function getModelPriceTokens(uint256 nodeId, bytes32 modelId) external view returns (address[] memory) {
+    function getModelPriceTokens(uint256 nodeId, bytes32 modelId) external view returns (address[] memory payTokens) {
         if (!_exists(nodeId)) revert InvalidNode();
         return _modelPayTokens[nodeId][modelId];
     }
 
     // ============================================
-    // ALLOWLIST (ADMIN ONLY)
+    // ALLOWLIST (ALLOWLIST_ROLE)
     // ============================================
 
     /// @notice Enable or disable allowlist enforcement for node registration.
-    /// @dev Admin-only. When enabled, only `isAllowedRegistrant[addr]=true`
+    /// @dev `ALLOWLIST_ROLE` only. When enabled, only `isAllowedRegistrant[addr]=true`
     ///      can call `registerNode`.
     /// @param enabled New allowlist status.
-    function setAllowlistEnabled(bool enabled) external onlyRole(ADMIN_ROLE) {
+    function setAllowlistEnabled(bool enabled) external onlyRole(ALLOWLIST_ROLE) {
         allowlistEnabled = enabled;
         emit AllowlistStatusChanged(enabled);
     }
 
     /// @notice Set (or clear) an address as an allowed registrant.
-    /// @dev Admin-only. Has no effect if allowlist is disabled.
+    /// @dev `ALLOWLIST_ROLE` only. Has no effect if allowlist is disabled.
     /// @param registrant Address to update.
     /// @param allowed Whether the address may register nodes while allowlist is enabled.
-    function setAllowedRegistrant(address registrant, bool allowed) external onlyRole(ADMIN_ROLE) {
+    function setAllowedRegistrant(address registrant, bool allowed) external onlyRole(ALLOWLIST_ROLE) {
         if (registrant == address(0)) revert InvalidAddress();
         isAllowedRegistrant[registrant] = allowed;
         emit AllowlistUpdated(registrant, allowed);
     }
 
     // ============================================
-    // ADMIN & STAKING CONFIG (ADMIN ONLY)
+    // ADMIN & STAKING CONFIG
     // ============================================
 
-    /// @notice Transfer admin privileges to a new address.
-    /// @dev Admin-only. Grants ADMIN_ROLE to `newAdmin` and revokes it from caller.
-    /// @param newAdmin Address to receive admin role.
+    /// @notice Transfer admin privileges (and operational roles) to a new address.
+    /// @dev `ADMIN_ROLE` only. Grants all roles to `newAdmin` and revokes them from caller.
+    /// @param newAdmin Address to receive admin and ops roles.
     function setAdmin(address newAdmin) external onlyRole(ADMIN_ROLE) {
         if (newAdmin == address(0)) revert InvalidAddress();
         address old = msg.sender;
 
-        // grant new, revoke old
+        // grant new
         _grantRole(ADMIN_ROLE, newAdmin);
+        _grantRole(ALLOWLIST_ROLE, newAdmin);
+        _grantRole(CONFIG_ROLE, newAdmin);
+        _grantRole(PAUSER_ROLE, newAdmin);
+
+        // revoke from old
         _revokeRole(ADMIN_ROLE, old);
+        _revokeRole(ALLOWLIST_ROLE, old);
+        _revokeRole(CONFIG_ROLE, old);
+        _revokeRole(PAUSER_ROLE, old);
 
         emit AdminChanged(old, newAdmin);
     }
 
     /// @notice Update the global minimum stake required for new node registrations.
-    /// @dev Admin-only. Does not retroactively change stake on existing nodes.
+    /// @dev `CONFIG_ROLE` only. Does not retroactively change stake on existing nodes.
     /// @param newMinStake New required stake amount.
-    function setMinStake(uint256 newMinStake) external onlyRole(ADMIN_ROLE) {
+    function setMinStake(uint256 newMinStake) external onlyRole(CONFIG_ROLE) {
         if (newMinStake == 0) revert MinStakeNotSet();
         uint256 old = minStake;
         minStake = newMinStake;
         emit MinStakeUpdated(old, newMinStake);
+    }
+
+    // ============================================
+    // PAUSING (PAUSER_ROLE)
+    // ============================================
+
+    /// @notice Pause state-changing operations on the registry.
+    /// @dev `PAUSER_ROLE` only. Affects functions with `whenNotPaused`.
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /// @notice Unpause the registry.
+    /// @dev `PAUSER_ROLE` only.
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 
     // ============================================
@@ -373,14 +411,14 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @notice Fetch a node by id.
     /// @param nodeId Id of the node.
     /// @return node The node struct (operator, paymentVault, metadataURI, active).
-    function getNode(uint256 nodeId) external view returns (Node memory) {
+    function getNode(uint256 nodeId) external view returns (Node memory node) {
         if (!_exists(nodeId)) revert InvalidNode();
         return _nodes[nodeId];
     }
 
     /// @notice Get the next node id that will be assigned on registration.
     /// @return id The next node id (also equals total nodes ever registered).
-    function nextNodeId() external view returns (uint256) {
+    function nextNodeId() external view returns (uint256 id) {
         return _nextNodeId;
     }
 
