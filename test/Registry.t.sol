@@ -219,7 +219,7 @@ contract MockERC20 is IERC20 {
 
         // -------- registerNode --------
 
-        function test_registerNode_success_stakes_and_emits() public {
+        function test_registerNode_success_stakes_and_emits_and_updates_totalNodes_views() public {
             uint256 balBefore = stake.balanceOf(op1);
 
             vm.prank(op1);
@@ -229,6 +229,7 @@ contract MockERC20 is IERC20 {
 
             assertEq(id, 0);
             assertEq(reg.nextNodeId(), 1);
+            assertEq(reg.totalNodes(), 1);
 
             GlassNodeRegistry.Node memory n = reg.getNode(0);
             assertEq(n.operator, op1);
@@ -239,6 +240,13 @@ contract MockERC20 is IERC20 {
             assertEq(reg.stakedAmount(0), minStake);
             assertEq(stake.balanceOf(op1), balBefore - minStake);
             assertEq(stake.balanceOf(address(reg)), minStake);
+
+            // new view: getAllNodes
+            GlassNodeRegistry.NodeSummary[] memory allNodes = reg.getAllNodes();
+            assertEq(allNodes.length, 1);
+            assertEq(allNodes[0].node.operator, op1);
+            assertEq(allNodes[0].node.paymentVault, address(vault1));
+            assertEq(allNodes[0].stake, minStake);
         }
 
         function test_registerNode_revert_invalid_vault() public {
@@ -303,7 +311,7 @@ contract MockERC20 is IERC20 {
 
         // -------- removeNode --------
 
-        function test_removeNode_refunds_and_inactivates() public {
+        function test_removeNode_refunds_and_inactivates_and_getAllNodes_reflects_inactive() public {
             uint256 id = _makeNode(op1, address(vault1));
             uint256 balBefore = stake.balanceOf(op1);
 
@@ -317,6 +325,11 @@ contract MockERC20 is IERC20 {
             assertEq(reg.stakedAmount(id), 0);
             assertEq(stake.balanceOf(op1), balBefore + minStake);
             assertEq(stake.balanceOf(address(reg)), 0);
+
+            GlassNodeRegistry.NodeSummary[] memory allNodes = reg.getAllNodes();
+            assertEq(allNodes.length, 1);
+            assertFalse(allNodes[0].node.active);
+            assertEq(allNodes[0].stake, 0);
         }
 
         function test_removeNode_revert_already_inactive() public {
@@ -352,7 +365,7 @@ contract MockERC20 is IERC20 {
 
         // -------- rotateOperator --------
 
-        function test_rotateOperator_by_operator_or_admin() public {
+        function test_rotateOperator_by_operator_or_admin_and_fullState_updates_operator() public {
             uint256 id = _makeNode(op1, address(vault1));
 
             vm.prank(op1);
@@ -360,6 +373,10 @@ contract MockERC20 is IERC20 {
             emit GlassNodeRegistry.OperatorRotated(id, op1, op2);
             reg.rotateOperator(id, op2);
             assertEq(reg.getNode(id).operator, op2);
+
+            // new view: full state reflects operator change
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.node.operator, op2);
 
             vm.prank(admin);
             reg.rotateOperator(id, op1);
@@ -380,7 +397,7 @@ contract MockERC20 is IERC20 {
 
         // -------- setPaymentVault --------
 
-        function test_setPaymentVault_success() public {
+        function test_setPaymentVault_success_and_fullState_updates_vault() public {
             uint256 id = _makeNode(op1, address(vault1));
 
             vm.prank(op1);
@@ -388,6 +405,9 @@ contract MockERC20 is IERC20 {
             emit GlassNodeRegistry.PaymentVaultUpdated(id, address(vault1), address(vault2));
             reg.setPaymentVault(id, address(vault2));
             assertEq(reg.getNode(id).paymentVault, address(vault2));
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.node.paymentVault, address(vault2));
         }
 
         function test_setPaymentVault_revert_zero_or_eoa_or_unauth() public {
@@ -408,7 +428,7 @@ contract MockERC20 is IERC20 {
 
         // -------- models / pricing --------
 
-        function test_setModelPrice_adds_model_and_token() public {
+        function test_setModelPrice_adds_model_and_token_and_fullState_returns_prices() public {
             uint256 id = _makeNode(op1, address(vault1));
 
             vm.prank(op1);
@@ -425,8 +445,15 @@ contract MockERC20 is IERC20 {
             address[] memory tokens = reg.getModelPriceTokens(id, mA);
             assertEq(tokens.length, 1);
             assertEq(tokens[0], address(pay1));
-
             assertEq(reg.getModelPrice(id, mA, address(pay1)), 10);
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.models.length, 1);
+            assertEq(st.models[0].modelId, mA);
+            assertEq(st.models[0].payTokens.length, 1);
+            assertEq(st.models[0].payTokens[0], address(pay1));
+            assertEq(st.models[0].prices.length, 1);
+            assertEq(st.models[0].prices[0], 10);
         }
 
         function test_setModelPrice_add_second_token_no_dup_model() public {
@@ -444,6 +471,13 @@ contract MockERC20 is IERC20 {
             assertEq(tokens.length, 2);
             assertEq(tokens[0], address(pay1));
             assertEq(tokens[1], address(pay2));
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.models.length, 1);
+            assertEq(st.models[0].payTokens.length, 2);
+            assertEq(st.models[0].prices.length, 2);
+            assertEq(st.models[0].prices[0], 10);
+            assertEq(st.models[0].prices[1], 20);
         }
 
         function test_setModelPrice_update_existing_no_dup_token() public {
@@ -458,6 +492,9 @@ contract MockERC20 is IERC20 {
             address[] memory tokens = reg.getModelPriceTokens(id, mA);
             assertEq(tokens.length, 1);
             assertEq(reg.getModelPrice(id, mA, address(pay1)), 15);
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.models[0].prices[0], 15);
         }
 
         function test_setModelPrice_zero_removes_token_only() public {
@@ -477,6 +514,12 @@ contract MockERC20 is IERC20 {
             assertEq(tokens.length, 1);
             assertEq(tokens[0], address(pay2));
             assertEq(reg.getModelPrice(id, mA, address(pay1)), 0);
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.models.length, 1);
+            assertEq(st.models[0].payTokens.length, 1);
+            assertEq(st.models[0].payTokens[0], address(pay2));
+            assertEq(st.models[0].prices[0], 20);
         }
 
         function test_setModelPrice_zero_last_token_removes_model() public {
@@ -492,6 +535,9 @@ contract MockERC20 is IERC20 {
 
             assertEq(reg.getNodeModels(id).length, 0);
             assertEq(reg.getModelPriceTokens(id, mA).length, 0);
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.models.length, 0);
         }
 
         function test_removeModel_removes_all_prices_and_model() public {
@@ -511,6 +557,9 @@ contract MockERC20 is IERC20 {
             assertEq(reg.getModelPrice(id, mA, address(pay1)), 0);
             assertEq(reg.getModelPrice(id, mA, address(pay2)), 0);
             assertEq(reg.getModelPriceTokens(id, mA).length, 0);
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.models.length, 0);
         }
 
         function test_removeModel_revert_if_missing() public {
@@ -537,7 +586,7 @@ contract MockERC20 is IERC20 {
             reg.setModelPrice(999, mA, address(pay1), 1);
         }
 
-        function test_multiple_models_independent_enumeration() public {
+        function test_multiple_models_independent_enumeration_and_fullState_includes_both() public {
             uint256 id = _makeNode(op1, address(vault1));
 
             vm.prank(op1);
@@ -549,6 +598,66 @@ contract MockERC20 is IERC20 {
             assertEq(models.length, 2);
             assertEq(models[0], mA);
             assertEq(models[1], mB);
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+            assertEq(st.models.length, 2);
+            assertEq(st.models[0].modelId, mA);
+            assertEq(st.models[1].modelId, mB);
+        }
+
+        // -------- new bulk/full state views --------
+
+        function test_totalNodes_and_getAllNodes_multiple_nodes_ordered() public {
+            uint256 id0 = _makeNode(op1, address(vault1));
+            uint256 id1 = _makeNode(op2, address(vault2));
+
+            assertEq(id0, 0);
+            assertEq(id1, 1);
+
+            assertEq(reg.totalNodes(), 2);
+            assertEq(reg.nextNodeId(), 2);
+
+            GlassNodeRegistry.NodeSummary[] memory allNodes = reg.getAllNodes();
+            assertEq(allNodes.length, 2);
+
+            assertEq(allNodes[0].node.operator, op1);
+            assertEq(allNodes[0].node.paymentVault, address(vault1));
+            assertEq(allNodes[0].stake, minStake);
+
+            assertEq(allNodes[1].node.operator, op2);
+            assertEq(allNodes[1].node.paymentVault, address(vault2));
+            assertEq(allNodes[1].stake, minStake);
+        }
+
+        function test_getNodeFullState_revert_invalid_node() public {
+            vm.expectRevert(GlassNodeRegistry.InvalidNode.selector);
+            reg.getNodeFullState(0);
+        }
+
+        function test_getNodeFullState_includes_stake_active_and_enumerations() public {
+            uint256 id = _makeNode(op1, address(vault1));
+
+            vm.prank(op1);
+            reg.setModelPrice(id, mA, address(pay1), 7);
+            vm.prank(op1);
+            reg.setModelPrice(id, mA, address(pay2), 9);
+
+            GlassNodeRegistry.NodeFullState memory st = reg.getNodeFullState(id);
+
+            assertEq(st.node.operator, op1);
+            assertEq(st.node.paymentVault, address(vault1));
+            assertEq(st.node.metadataURI, "meta");
+            assertTrue(st.node.active);
+            assertEq(st.stake, minStake);
+
+            assertEq(st.models.length, 1);
+            assertEq(st.models[0].modelId, mA);
+            assertEq(st.models[0].payTokens.length, 2);
+            assertEq(st.models[0].payTokens[0], address(pay1));
+            assertEq(st.models[0].payTokens[1], address(pay2));
+            assertEq(st.models[0].prices.length, 2);
+            assertEq(st.models[0].prices[0], 7);
+            assertEq(st.models[0].prices[1], 9);
         }
 
         // -------- admin / roles / minStake --------
@@ -628,7 +737,7 @@ contract MockERC20 is IERC20 {
             address configurer = address(0x2222);
             address pauser = address(0x3333);
 
-            // ---- Admin grants specific roles to specific addresses ----
+            // Admin grants specific roles
             vm.startPrank(admin);
             reg.grantRole(reg.ALLOWLIST_ROLE(), allowlister);
             reg.grantRole(reg.CONFIG_ROLE(), configurer);

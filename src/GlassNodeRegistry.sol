@@ -35,6 +35,23 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard, Pausable {
         bool active;
     }
 
+    struct NodeSummary {
+        Node node;
+        uint256 stake;
+    }
+
+    struct ModelInfo {
+        bytes32 modelId;
+        address[] payTokens;
+        uint256[] prices; // aligned with payTokens
+    }
+
+    struct NodeFullState {
+        Node node;
+        uint256 stake;
+        ModelInfo[] models;
+    }
+
     // ============================================
     // STATE
     // ============================================
@@ -420,6 +437,44 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard, Pausable {
     /// @return id The next node id (also equals total nodes ever registered).
     function nextNodeId() external view returns (uint256 id) {
         return _nextNodeId;
+    }
+
+    /// @notice Total number of nodes ever registered (including inactive).
+    function totalNodes() external view returns (uint256) {
+        return _nextNodeId;
+    }
+
+    /// @notice Returns a summary for every node (node struct + stake).
+    /// @dev Intended for off-chain monitoring; can be expensive onchain.
+    function getAllNodes() external view returns (NodeSummary[] memory out) {
+        uint256 n = _nextNodeId;
+        out = new NodeSummary[](n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = NodeSummary({node: _nodes[i], stake: stakedAmount[i]});
+        }
+    }
+
+    /// @notice Returns the full state of a node: Node struct, stake, models, pay tokens, prices.
+    /// @dev Intended for off-chain monitoring; can be expensive onchain.
+    function getNodeFullState(uint256 nodeId) external view returns (NodeFullState memory state) {
+        if (!_exists(nodeId)) revert InvalidNode();
+
+        bytes32[] storage models = _nodeModels[nodeId];
+        ModelInfo[] memory infos = new ModelInfo[](models.length);
+
+        for (uint256 i = 0; i < models.length; i++) {
+            bytes32 m = models[i];
+            address[] storage tokens = _modelPayTokens[nodeId][m];
+
+            uint256[] memory ps = new uint256[](tokens.length);
+            for (uint256 j = 0; j < tokens.length; j++) {
+                ps[j] = modelPricePerToken[nodeId][m][tokens[j]];
+            }
+
+            infos[i] = ModelInfo({modelId: m, payTokens: tokens, prices: ps});
+        }
+
+        state = NodeFullState({node: _nodes[nodeId], stake: stakedAmount[nodeId], models: infos});
     }
 
     // ============================================
