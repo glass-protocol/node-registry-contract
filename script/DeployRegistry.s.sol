@@ -30,16 +30,12 @@ contract GlassNodeRegistryScript is Script {
         }
         if (stakeToken == address(0)) {
             console2.log("Missing/invalid REG_STAKE_TOKEN env var.");
-            console2.log(
-                "Set REG_STAKE_TOKEN to the ERC20 staking token address."
-            );
+            console2.log("Set REG_STAKE_TOKEN to the ERC20 staking token address.");
             revert("REG_STAKE_TOKEN env var required");
         }
         if (minStake == 0) {
             console2.log("Missing/invalid REG_MIN_STAKE env var.");
-            console2.log(
-                "Set REG_MIN_STAKE to a non-zero uint (token base units)."
-            );
+            console2.log("Set REG_MIN_STAKE to a non-zero uint (token base units).");
             revert("REG_MIN_STAKE env var required");
         }
 

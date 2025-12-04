@@ -12,4 +12,5 @@
     ],
     "solidity.compileUsingRemoteVersion": "v0.8.30",
     "solidity.defaultCompiler": "remote",
+    "solidity.formatter": "forge"
 }

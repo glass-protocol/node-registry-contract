@@ -2,12 +2,8 @@
 pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {
-    SafeERC20
-} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {
-    ReentrancyGuard
-} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
@@ -40,13 +36,11 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     mapping(uint256 => uint256) public stakedAmount;
 
     // price per model per payment token
-    mapping(uint256 => mapping(bytes32 => mapping(address => uint256)))
-        public modelPricePerToken;
+    mapping(uint256 => mapping(bytes32 => mapping(address => uint256))) public modelPricePerToken;
 
     // enumerate payment tokens per model for each node
     mapping(uint256 => mapping(bytes32 => address[])) private _modelPayTokens;
-    mapping(uint256 => mapping(bytes32 => mapping(address => uint256)))
-        private _modelPayTokenIndex; // index+1
+    mapping(uint256 => mapping(bytes32 => mapping(address => uint256))) private _modelPayTokenIndex; // index+1
 
     mapping(uint256 => bytes32[]) private _nodeModels;
     mapping(uint256 => mapping(bytes32 => uint256)) private _nodeModelIndex; // index+1
@@ -84,22 +78,10 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
         uint256 stakedAmount
     );
     event NodeUpdated(uint256 indexed nodeId, string metadataURI, bool active);
-    event NodeRemoved(
-        uint256 indexed nodeId,
-        address indexed refundedTo,
-        uint256 refundedAmount
-    );
+    event NodeRemoved(uint256 indexed nodeId, address indexed refundedTo, uint256 refundedAmount);
 
-    event OperatorRotated(
-        uint256 indexed nodeId,
-        address indexed oldOp,
-        address indexed newOp
-    );
-    event PaymentVaultUpdated(
-        uint256 indexed nodeId,
-        address indexed oldVault,
-        address indexed newVault
-    );
+    event OperatorRotated(uint256 indexed nodeId, address indexed oldOp, address indexed newOp);
+    event PaymentVaultUpdated(uint256 indexed nodeId, address indexed oldVault, address indexed newVault);
 
     event AdminChanged(address indexed oldAdmin, address indexed newAdmin);
 
@@ -110,10 +92,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
 
     event ModelAdded(uint256 indexed nodeId, bytes32 indexed modelId);
     event ModelPriceUpdatedForToken(
-        uint256 indexed nodeId,
-        bytes32 indexed modelId,
-        address indexed payToken,
-        uint256 price
+        uint256 indexed nodeId, bytes32 indexed modelId, address indexed payToken, uint256 price
     );
     event ModelRemoved(uint256 indexed nodeId, bytes32 indexed modelId);
 
@@ -142,10 +121,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
 
     function _onlyOperatorOrAdmin(uint256 nodeId) internal view {
         if (!_exists(nodeId)) revert InvalidNode();
-        if (
-            msg.sender != _nodes[nodeId].operator &&
-            !hasRole(ADMIN_ROLE, msg.sender)
-        ) {
+        if (msg.sender != _nodes[nodeId].operator && !hasRole(ADMIN_ROLE, msg.sender)) {
             revert NotAuthorized();
         }
     }
@@ -164,10 +140,11 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @param metadataURI Arbitrary metadata for the node (endpoint/region/JSON/etc.).
     /// @param paymentVault Address of the payment channel vault contract for this node.
     /// @return nodeId The newly assigned node id.
-    function registerNode(
-        string calldata metadataURI,
-        address paymentVault
-    ) external nonReentrant returns (uint256 nodeId) {
+    function registerNode(string calldata metadataURI, address paymentVault)
+        external
+        nonReentrant
+        returns (uint256 nodeId)
+    {
         // Best effort to ensure the paymentVault is a smartContract, and hopefully implements IPaymentChannelVault
         if (paymentVault == address(0)) revert InvalidAddress();
         if (paymentVault.code.length == 0) revert NotAContract();
@@ -177,28 +154,14 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
         }
 
         nodeId = _nextNodeId++;
-        _nodes[nodeId] = Node({
-            operator: msg.sender,
-            paymentVault: paymentVault,
-            metadataURI: metadataURI,
-            active: true
-        });
+        _nodes[nodeId] =
+            Node({operator: msg.sender, paymentVault: paymentVault, metadataURI: metadataURI, active: true});
         stakedAmount[nodeId] = minStake;
 
         // transfer stake
-        IERC20(stakeToken).safeTransferFrom(
-            msg.sender,
-            address(this),
-            minStake
-        );
+        IERC20(stakeToken).safeTransferFrom(msg.sender, address(this), minStake);
 
-        emit NodeRegistered(
-            nodeId,
-            msg.sender,
-            paymentVault,
-            metadataURI,
-            minStake
-        );
+        emit NodeRegistered(nodeId, msg.sender, paymentVault, metadataURI, minStake);
     }
 
     /// @notice Update a node’s metadata and/or active flag.
@@ -207,11 +170,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @param nodeId Id of the node to update.
     /// @param metadataURI New metadata string.
     /// @param active New active status.
-    function updateNode(
-        uint256 nodeId,
-        string calldata metadataURI,
-        bool active
-    ) external onlyOperatorOrAdmin(nodeId) {
+    function updateNode(uint256 nodeId, string calldata metadataURI, bool active) external onlyOperatorOrAdmin(nodeId) {
         Node storage n = _nodes[nodeId];
         n.metadataURI = metadataURI;
         n.active = active;
@@ -224,9 +183,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     ///      and transfers refund to the *current* operator.
     ///      Uses nonReentrant around the ERC-20 refund transfer.
     /// @param nodeId Id of the node to remove.
-    function removeNode(
-        uint256 nodeId
-    ) external nonReentrant onlyOperatorOrAdmin(nodeId) {
+    function removeNode(uint256 nodeId) external nonReentrant onlyOperatorOrAdmin(nodeId) {
         Node storage n = _nodes[nodeId];
         if (!n.active) revert AlreadyInactive();
 
@@ -250,10 +207,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @dev Callable by operator or admin. Does not affect stake or models.
     /// @param nodeId Id of the node.
     /// @param newOperator New operator address.
-    function rotateOperator(
-        uint256 nodeId,
-        address newOperator
-    ) external onlyOperatorOrAdmin(nodeId) {
+    function rotateOperator(uint256 nodeId, address newOperator) external onlyOperatorOrAdmin(nodeId) {
         if (newOperator == address(0)) revert InvalidAddress();
         Node storage n = _nodes[nodeId];
 
@@ -267,10 +221,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @dev Callable by operator or admin. Vault must be non-zero and a contract.
     /// @param nodeId Id of the node.
     /// @param newVault New payment vault address.
-    function setPaymentVault(
-        uint256 nodeId,
-        address newVault
-    ) external onlyOperatorOrAdmin(nodeId) {
+    function setPaymentVault(uint256 nodeId, address newVault) external onlyOperatorOrAdmin(nodeId) {
         // Best effort to ensure the vault is a smart contract.
         if (newVault == address(0)) revert InvalidAddress();
         if (newVault.code.length == 0) revert NotAContract();
@@ -296,12 +247,10 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @param modelId Model identifier (bytes32).
     /// @param payToken ERC-20 token address used for payments.
     /// @param price Price per token for `modelId` in `payToken` units.
-    function setModelPrice(
-        uint256 nodeId,
-        bytes32 modelId,
-        address payToken,
-        uint256 price
-    ) external onlyOperatorOrAdmin(nodeId) {
+    function setModelPrice(uint256 nodeId, bytes32 modelId, address payToken, uint256 price)
+        external
+        onlyOperatorOrAdmin(nodeId)
+    {
         if (payToken == address(0)) revert InvalidAddress();
 
         // if price==0, remove price for that payToken only
@@ -321,9 +270,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
         // add payToken to model enumeration if new
         if (_modelPayTokenIndex[nodeId][modelId][payToken] == 0) {
             _modelPayTokens[nodeId][modelId].push(payToken);
-            _modelPayTokenIndex[nodeId][modelId][payToken] = _modelPayTokens[
-                nodeId
-            ][modelId].length;
+            _modelPayTokenIndex[nodeId][modelId][payToken] = _modelPayTokens[nodeId][modelId].length;
         }
 
         modelPricePerToken[nodeId][modelId][payToken] = price;
@@ -334,10 +281,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @dev Callable by operator or admin. Removes all prices and model enumeration entry.
     /// @param nodeId Id of the node.
     /// @param modelId Model identifier to remove.
-    function removeModel(
-        uint256 nodeId,
-        bytes32 modelId
-    ) external onlyOperatorOrAdmin(nodeId) {
+    function removeModel(uint256 nodeId, bytes32 modelId) external onlyOperatorOrAdmin(nodeId) {
         uint256 idxPlusOne = _nodeModelIndex[nodeId][modelId];
         if (idxPlusOne == 0) revert ModelNotFound();
 
@@ -347,9 +291,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @notice Get all models a node currently supports.
     /// @param nodeId Id of the node.
     /// @return models Array of model ids.
-    function getNodeModels(
-        uint256 nodeId
-    ) external view returns (bytes32[] memory) {
+    function getNodeModels(uint256 nodeId) external view returns (bytes32[] memory) {
         if (!_exists(nodeId)) revert InvalidNode();
         return _nodeModels[nodeId];
     }
@@ -359,11 +301,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @param modelId Model identifier.
     /// @param payToken Payment token address.
     /// @return price Stored per-token price (0 if unset).
-    function getModelPrice(
-        uint256 nodeId,
-        bytes32 modelId,
-        address payToken
-    ) external view returns (uint256) {
+    function getModelPrice(uint256 nodeId, bytes32 modelId, address payToken) external view returns (uint256) {
         if (!_exists(nodeId)) revert InvalidNode();
         return modelPricePerToken[nodeId][modelId][payToken];
     }
@@ -372,10 +310,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @param nodeId Id of the node.
     /// @param modelId Model identifier.
     /// @return payTokens Array of ERC-20 token addresses accepted for the model.
-    function getModelPriceTokens(
-        uint256 nodeId,
-        bytes32 modelId
-    ) external view returns (address[] memory) {
+    function getModelPriceTokens(uint256 nodeId, bytes32 modelId) external view returns (address[] memory) {
         if (!_exists(nodeId)) revert InvalidNode();
         return _modelPayTokens[nodeId][modelId];
     }
@@ -397,10 +332,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
     /// @dev Admin-only. Has no effect if allowlist is disabled.
     /// @param registrant Address to update.
     /// @param allowed Whether the address may register nodes while allowlist is enabled.
-    function setAllowedRegistrant(
-        address registrant,
-        bool allowed
-    ) external onlyRole(ADMIN_ROLE) {
+    function setAllowedRegistrant(address registrant, bool allowed) external onlyRole(ADMIN_ROLE) {
         if (registrant == address(0)) revert InvalidAddress();
         isAllowedRegistrant[registrant] = allowed;
         emit AllowlistUpdated(registrant, allowed);
@@ -483,11 +415,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard {
         delete _modelPayTokens[nodeId][modelId];
     }
 
-    function _removeModelPriceToken(
-        uint256 nodeId,
-        bytes32 modelId,
-        address payToken
-    ) internal {
+    function _removeModelPriceToken(uint256 nodeId, bytes32 modelId, address payToken) internal {
         uint256 idxPlusOne = _modelPayTokenIndex[nodeId][modelId][payToken];
         if (idxPlusOne == 0) {
             modelPricePerToken[nodeId][modelId][payToken] = 0;
