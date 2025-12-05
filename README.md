@@ -86,7 +86,7 @@ export REG_STAKE_TOKEN=0xYourStakeToken
 export REG_MIN_STAKE=100000000000000000000
 export REG_PRIVATE_KEY=0xYOUR_PRIVATE_KEY
 
-forge script script/GlassNodeRegistry.s.sol:GlassNodeRegistryScript
+forge script script/GlassNodeRegistry.s.sol:GlassNodeRegistryDeployScript
 --rpc-url [https://your.rpc.url](https://your.rpc.url)
 --broadcast
 -vvv
@@ -106,7 +106,7 @@ export REG_STAKE_TOKEN=0xYourMockOrDeployedToken
 export REG_MIN_STAKE=100e18
 export REG_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
-forge script script/GlassNodeRegistry.s.sol:GlassNodeRegistryScript
+forge script script/GlassNodeRegistry.s.sol:GlassNodeRegistryDeployScript
 --rpc-url [http://127.0.0.1:8545](http://127.0.0.1:8545)
 --broadcast
 -vvv
