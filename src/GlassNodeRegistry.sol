@@ -78,7 +78,7 @@ contract GlassNodeRegistry is AccessControl, ReentrancyGuard, Pausable {
     mapping(address => bool) public isAllowedRegistrant;
 
     // staking config
-    address public stakeToken;
+    address public immutable stakeToken;
     uint256 public minStake;
 
     // ============================================
